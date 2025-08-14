@@ -1,6 +1,6 @@
-# Machine Design Toolkit (N5/N6) — v0.2.2
+# Machine Design Toolkit (N5/N6) — v0.2.3
 
-**New:** Formula-guided layout — each tab shows the main formula(s) on the left and the required inputs on the right.
+**Fix:** Duplicate widget IDs in Streamlit tabs caused an error. v0.2.3 adds unique `key=` values to every widget.
 
 Quick start:
 ```bash
