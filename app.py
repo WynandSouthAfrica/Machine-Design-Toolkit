@@ -1,7 +1,5 @@
-# Machine Design Toolkit (N5/N6) — v0.2.1
-# Fixes:
-#  - Conveyor tab: Flow area label now in cm² (correct factor 1e4)
-#  - Idler spacing now reported in mm (converted from metres)
+# Machine Design Toolkit (N5/N6) — v0.2.2
+# Feature: "Formula + Inputs" side-by-side cards for all six core modules
 # Quick start:
 #   pip install streamlit fpdf numpy
 #   streamlit run app.py
@@ -14,11 +12,9 @@ import streamlit as st
 from fpdf import FPDF
 
 st.set_page_config(page_title="Machine Design Toolkit (N5/N6)", layout="wide")
-st.title("🧮 Machine Design Toolkit (N5/N6) — v0.2.1")
+st.title("🧮 Machine Design Toolkit (N5/N6) — v0.2.2  •  Formula-Guided Inputs")
 
-# ────────────────────────────────────────────────────────────────
 # Sidebar meta
-# ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("📁 Project")
     project = st.text_input("Project", "Workshop Calculations")
@@ -60,9 +56,17 @@ def export_pdf(title: str, inputs: dict, outputs: dict) -> bytes:
     pdf.multi_cell(0, 6, "Note: Educational tool. Verify against standards (SANS/ISO/VDI/ASME).")
     return pdf.output(dest="S").encode("latin1")
 
-# ────────────────────────────────────────────────────────────────
-# Tabs
-# ────────────────────────────────────────────────────────────────
+def formula_card(latex: str, input_draw_fn=None, note: str = ""):
+    col_l, col_r = st.columns([1.05, 1.15])
+    with col_l:
+        st.latex(latex)
+        if note:
+            st.caption(note)
+    with col_r:
+        if input_draw_fn:
+            return input_draw_fn()
+    return None
+
 tabs = st.tabs([
     "Bolted Joint",
     "Shaft Sizing",
@@ -70,171 +74,284 @@ tabs = st.tabs([
     "Belt Drive",
     "Fillet Weld",
     "Thin Cylinder",
-    "Conveyor Basics",
-    "Mechatronics (Starter)",
 ])
 
-# (Tabs 0–5 identical to v0.2; omitted here for brevity in this patch snippet)
-# To keep this patch self-contained for you, we include Conveyor + Mechatronics fully.
+# 1) Bolted Joint — Formula-led UI
+with tabs[0]:
+    st.subheader("Bolted Joint — Formula-Guided Inputs")
+    st.markdown("Pick a preset size or enter **d** & **p** manually. Then follow the formulas.")
 
-# ────────────────────────────────────────────────────────────────
-# 7) Conveyor Basics (patched)
-# ────────────────────────────────────────────────────────────────
-with tabs[6]:
-    st.subheader("Conveyor Basics — Spacing, Flow & Power (heuristics + sag method)")
+    use_preset = st.toggle("Use metric coarse preset", value=True)
+    pitch_map = {"M6":1.0,"M8":1.25,"M10":1.5,"M12":1.75,"M16":2.0,"M20":2.5}
 
-    st.markdown("**A) Line Loads & Capacity**")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        belt_mass_per_m = st.number_input("Belt mass per metre (kg/m)", min_value=1.0, value=15.0, step=0.5, help="From belt datasheet")
-        bulk_density = st.number_input("Bulk density ρ (t/m³)", min_value=0.2, value=0.75, step=0.05)
-        belt_speed = st.number_input("Belt speed v (m/s)", min_value=0.1, value=2.5, step=0.1)
-    with c2:
-        capacity_tph = st.number_input("Capacity (t/h)", min_value=1.0, value=200.0, step=5.0)
-        return_mass_per_m = st.number_input("Return side additional mass (kg/m)", min_value=0.0, value=0.0, step=0.5, help="Scrapers, buildup etc.")
-        length_L = st.number_input("Conveyor length L (m)", min_value=1.0, value=60.0, step=1.0)
-    with c3:
-        incline_deg = st.number_input("Incline angle (deg)", min_value=0.0, max_value=35.0, value=24.0, step=0.5)
-        friction_factor = st.number_input("Friction factor f (0.015–0.03)", min_value=0.005, max_value=0.08, value=0.02, step=0.001)
-        service_factor = st.number_input("Service factor on power", min_value=1.0, value=1.15, step=0.05)
+    if use_preset:
+        bolt = st.selectbox("Bolt size", list(pitch_map.keys()), index=3)  # M12 default
+        d = float(bolt[1:])
+        p = pitch_map[bolt]
+        st.caption(f"Preset: d = {d} mm, p = {p} mm")
+    else:
+        c = st.columns(2)
+        with c[0]:
+            d = st.number_input("Nominal diameter d (mm)", min_value=1.0, value=12.0, step=0.5)
+        with c[1]:
+            p = st.number_input("Pitch p (mm)", min_value=0.5, value=1.75, step=0.05)
 
-    # Mass flow and cross-sectional area (approx)
-    m_dot = capacity_tph * 1000.0 / 3600.0  # kg/s
-    A_m2 = m_dot / (bulk_density*1000.0 * belt_speed) if bulk_density > 0 else 0.0
+    # A) Stress area
+    def draw_as():
+        return {}
+    formula_card(
+        r"A_s=\frac{\pi}{4}\,\big(d-0.9382\,p\big)^2",
+        draw_as,
+        note="ISO metric coarse tensile stress area"
+    )
+    As = (math.pi/4.0) * (d - 0.9382*p)**2  # mm²
+    st.info(f"**Stress area A_s:** {As:.2f} mm²")
 
-    g = 9.81
-    w_belt = belt_mass_per_m * g  # N/m
-    w_mat = (m_dot / belt_speed) * g  # N/m
-    w_carry = w_belt + w_mat
-    w_return = (belt_mass_per_m + return_mass_per_m) * g
+    # B) Preload
+    def draw_preload():
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            prop_class = st.selectbox("Property class", ["8.8","10.9","12.9"], index=0)
+        with col2:
+            Re_default = {"8.8": 640.0, "10.9": 940.0, "12.9": 1100.0}[prop_class]
+            Re = st.number_input("Yield strength Re (MPa)", min_value=300.0, max_value=1400.0, value=Re_default, step=10.0)
+        with col3:
+            preload_frac = st.number_input("Preload fraction φ (0.6–0.8)", min_value=0.4, max_value=0.9, value=0.7, step=0.05)
+        return {"prop_class":prop_class, "Re":Re, "phi":preload_frac}
+    vals = formula_card(
+        r"F_\mathrm{pre}=\phi\,R_e\,A_s",
+        draw_preload,
+        note="Target preload as a fraction of yield × stress area"
+    )
+    Re = vals["Re"]; preload_frac = vals["phi"]
+    F_pre = preload_frac * Re * As  # N
+    st.success(f"**Preload F_pre:** {F_pre/1000:.2f} kN")
 
-    # Correct label: cm² (1 m² = 10,000 cm²)
-    st.markdown(f"**Flow area A:** {A_m2*1e4:.0f} cm² (approx)  |  **Carry line load:** {w_carry:.0f} N/m  |  **Return line load:** {w_return:.0f} N/m")
+    # C) Torque
+    def draw_torque():
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            K = st.number_input("Torque factor K (0.15–0.25)", min_value=0.1, max_value=0.4, value=0.20, step=0.01)
+        with col2:
+            SF = st.number_input("Safety factor on preload", min_value=1.0, max_value=2.0, value=1.0, step=0.1)
+        with col3:
+            req_clamp = st.number_input("Required clamp (kN)", min_value=0.0, value=0.0, step=0.5)
+        return {"K":K, "SF":SF, "req":req_clamp}
+    v = formula_card(
+        r"T=K\,\frac{F_\mathrm{pre}}{\mathrm{SF}}\frac{d}{1000}",
+        draw_torque,
+        note="T in N·m; d in mm"
+    )
+    T = v["K"] * (F_pre / v["SF"]) * d / 1000.0
+    st.markdown(f"**Tightening torque:** {T:.1f} N·m")
+    if v["req"]>0:
+        ok = (F_pre/1000.0) >= v["req"]
+        st.caption(f"Clamp check: {'✅ OK' if ok else '⚠️ Not OK'} — available {F_pre/1000:.2f} kN vs required {v['req']:.2f} kN")
 
-    st.markdown("---")
-    st.markdown("**B) Idler Spacing from Sag Ratio**  \nUses parabolic sag approximation:  *S = 8·f·T / w*  (f = sag/span). Provide tension estimates at the section.")
-    s1, s2 = st.columns(2)
-    with s1:
-        f_carry = st.number_input("Carry sag ratio f_carry (typ. 0.01–0.02)", min_value=0.005, max_value=0.05, value=0.015, step=0.001)
-        T_carry = st.number_input("Carry strand tension estimate T_carry (N)", min_value=1000.0, value=8000.0, step=500.0)
-        S_carry_m = 8.0 * f_carry * T_carry / max(w_carry, 1e-9)  # metres
-        st.markdown(f"**Recommended carry spacing S_carry:** {S_carry_m*1000.0:.0f} mm")
-    with s2:
-        f_return = st.number_input("Return sag ratio f_return (typ. 0.02–0.03)", min_value=0.005, max_value=0.08, value=0.025, step=0.001)
-        T_return = st.number_input("Return strand tension estimate T_return (N)", min_value=500.0, value=4000.0, step=250.0)
-        S_return_m = 8.0 * f_return * T_return / max(w_return, 1e-9)  # metres
-        st.markdown(f"**Recommended return spacing S_return:** {S_return_m*1000.0:.0f} mm")
-
-    st.caption("Rule-of-thumb sanity checks: carry 800–1200 mm, return 1500–3000 mm for many mid-size belts. Adjust for width, trough angle (35°/40°/45°), and duty.")
-
-    st.markdown("---")
-    st.markdown("**C) Power on Incline (lift + friction)**")
-    incline_rad = math.radians(incline_deg)
-    P_lift_W = m_dot * 9.81 * belt_speed * math.sin(incline_rad)
-    W_total = (w_carry + w_return) * length_L
-    F_fric = friction_factor * W_total
-    P_fric_W = F_fric * belt_speed
-    P_total_kW = (P_lift_W + P_fric_W) / 1000.0 * service_factor
-
-    c4, c5, c6 = st.columns(3)
-    with c4: st.markdown(f"**Lift power:** {P_lift_W/1000:.2f} kW")
-    with c5: st.markdown(f"**Friction power:** {P_fric_W/1000:.2f} kW")
-    with c6: st.markdown(f"**Motor power (with SF):** {P_total_kW:.2f} kW")
-
-    if st.button("📄 Export PDF — Conveyor Basics"):
+    if st.button("📄 Export PDF — Bolted Joint"):
         pdf = export_pdf(
-            "Conveyor Basics — Spacing, Flow & Power",
-            {
-                "Belt mass (kg/m)": belt_mass_per_m, "ρ (t/m³)": bulk_density, "v (m/s)": belt_speed,
-                "Capacity (t/h)": capacity_tph, "Return add mass (kg/m)": return_mass_per_m, "L (m)": length_L,
-                "Incline (deg)": incline_deg, "f friction": friction_factor, "Service factor": service_factor,
-                "f_carry": f_carry, "T_carry (N)": T_carry, "f_return": f_return, "T_return (N)": T_return
-            },
-            {
-                "A (m²)": round(A_m2,4), "w_carry (N/m)": round(w_carry,0), "w_return (N/m)": round(w_return,0),
-                "S_carry (mm)": round(S_carry_m*1000.0,0), "S_return (mm)": round(S_return_m*1000.0,0),
-                "P_lift (kW)": round(P_lift_W/1000,2), "P_fric (kW)": round(P_fric_W/1000,2), "P_motor (kW)": round(P_total_kW,2)
-            }
+            "Bolted Joint — Formula-Guided",
+            {"d (mm)": d, "p (mm)": p, "A_s (mm²)": round(As,2), "Re (MPa)": Re, "φ": preload_frac},
+            {"F_pre (kN)": round(F_pre/1000.0,2), "Torque T (N·m)": round(T,1)}
         )
-        st.download_button("Download PDF", data=pdf, file_name="conveyor_basics_report.pdf", mime="application/pdf")
+        st.download_button("Download PDF", data=pdf, file_name="bolted_joint_formulas.pdf", mime="application/pdf")
 
-# ────────────────────────────────────────────────────────────────
-# 8) Mechatronics (Starter) — unchanged from v0.2
-# ────────────────────────────────────────────────────────────────
-with tabs[7]:
-    st.subheader("Mechatronics Starter — N4/N5/N6 Helpers")
+# 2) Shaft Sizing — Formula-led UI
+with tabs[1]:
+    st.subheader("Shaft Sizing — Combined Bending & Torsion (ASME-style)")
+    use_power = st.toggle("Compute T from P & n (else enter T directly)", value=True)
 
-    m_tabs = st.tabs(["DC Motor & Gearbox Sizing", "Pneumatic Cylinder Sizing", "Signal Scaling (4–20 mA)"])
+    if use_power:
+        def draw_Tpower():
+            c1, c2 = st.columns(2)
+            with c1:
+                P_kW = st.number_input("Power P (kW)", min_value=0.0, value=15.0, step=0.5)
+            with c2:
+                n_rpm = st.number_input("Speed n (rpm)", min_value=1.0, value=1450.0, step=10.0)
+            return {"P":P_kW, "n":n_rpm}
+        vals = formula_card(
+            r"T=\frac{9550\,P}{n}",
+            draw_Tpower,
+            note="T in N·m (P in kW, n in rpm)"
+        )
+        T_Nm = 9550.0 * vals["P"] / vals["n"]
+    else:
+        def draw_T():
+            return {"T": st.number_input("Torque T (N·m)", min_value=0.0, value=100.0, step=10.0)}
+        vals = formula_card(r"T=T", draw_T)
+        T_Nm = vals["T"]
 
-    # A) DC Motor & Gearbox sizing (simplified)
-    with m_tabs[0]:
-        c1, c2, c3 = st.columns(3)
+    def draw_core():
+        c1,c2,c3 = st.columns(3)
         with c1:
-            load_torque = st.number_input("Load torque at shaft (N·m)", min_value=0.0, value=50.0, step=1.0)
-            speed_req = st.number_input("Required output speed (rpm)", min_value=1.0, value=60.0, step=1.0)
-            accel_time = st.number_input("Accel time to speed (s)", min_value=0.1, value=2.0, step=0.1)
+            M_Nm = st.number_input("Bending moment M (N·m)", min_value=0.0, value=500.0, step=10.0)
         with c2:
-            inertia_load = st.number_input("Equivalent inertia at load J (kg·m²)", min_value=0.0, value=0.05, step=0.005)
-            gear_eff = st.number_input("Gearbox efficiency η_g", min_value=0.5, max_value=1.0, value=0.9, step=0.01)
-            sf = st.number_input("Service factor", min_value=1.0, value=1.5, step=0.1)
+            Km = st.number_input("Shock factor in bending K_m", min_value=1.0, value=1.5, step=0.1)
+            Kt = st.number_input("Shock factor in torsion K_t", min_value=1.0, value=1.0, step=0.1)
         with c3:
-            gear_ratio = st.number_input("Gear ratio i = ω_motor/ω_out", min_value=1.0, value=20.0, step=1.0)
-            motor_eff = st.number_input("Motor efficiency η_m", min_value=0.5, max_value=1.0, value=0.85, step=0.01)
+            tau_allow = st.number_input("Allowable shear τ_allow (MPa)", min_value=20.0, value=40.0, step=5.0)
+            keyway_factor = st.number_input("Keyway factor (0.8–1.0)", min_value=0.7, max_value=1.0, value=0.85, step=0.01)
+        return {"M":M_Nm, "Km":Km, "Kt":Kt, "tau":tau_allow, "kw":keyway_factor}
+    p = formula_card(
+        r"d=\left[\frac{16}{\pi\,\tau_\mathrm{allow}}\sqrt{(K_m M)^2+(K_t T)^2}\right]^{1/3}",
+        draw_core,
+        note="M and T in N·mm"
+    )
+    Meq = p["Km"] * p["M"] * 1000.0
+    Teq = p["Kt"] * T_Nm * 1000.0
+    d_mm = ((16.0/(math.pi * p["tau"])) * math.sqrt(Meq**2 + Teq**2)) ** (1.0/3.0)
+    d_mm /= p["kw"]
+    st.success(f"**Recommended solid shaft diameter d:** {d_mm:.2f} mm")
 
-        omega_out = speed_req * 2*math.pi / 60.0
-        T_accel = inertia_load * omega_out / max(accel_time, 1e-6)
-        T_out = (load_torque + T_accel) * sf
-        T_motor = T_out / (gear_ratio * gear_eff)
-        omega_motor = omega_out * gear_ratio
-        P_mech = (T_motor * omega_motor) / max(motor_eff, 1e-6)  # W
+    if st.button("📄 Export PDF — Shaft Sizing"):
+        pdf = export_pdf(
+            "Shaft Sizing — Formula-Guided",
+            {"T (N·m)": round(T_Nm,2), "M (N·m)": round(p['M'],2), "K_m":p["Km"], "K_t":p["Kt"], "τ_allow (MPa)":p["tau"], "Keyway":p["kw"]},
+            {"d (mm)": round(d_mm,2)},
+        )
+        st.download_button("Download PDF", data=pdf, file_name="shaft_sizing_formulas.pdf", mime="application/pdf")
 
-        st.markdown(f"**Motor shaft torque:** {T_motor:.2f} N·m   |   **Motor speed:** {omega_motor*60/(2*math.pi):.0f} rpm")
-        st.markdown(f"**Estimated electrical power:** {P_mech/1000:.2f} kW")
-
-    # B) Pneumatic cylinder sizing
-    with m_tabs[1]:
-        c1, c2, c3 = st.columns(3)
+# 3) Bearing Life — Formula-led UI
+with tabs[2]:
+    st.subheader("Bearing Life (L10) — Formula-Guided")
+    def draw_bearing():
+        c1,c2,c3 = st.columns(3)
         with c1:
-            force_req = st.number_input("Required force (kN)", min_value=0.1, value=5.0, step=0.1)
-            pressure_bar = st.number_input("Supply pressure (bar)", min_value=2.0, value=6.0, step=0.5)
-            safety = st.number_input("Safety factor", min_value=1.0, value=1.3, step=0.1)
+            btype = st.selectbox("Type", ["Ball (p=3)","Roller (p=10/3)"], index=0)
         with c2:
-            rod_d_mm = st.number_input("Rod diameter (mm)", min_value=6.0, value=16.0, step=1.0)
-            double_acting = st.toggle("Double-acting (retract area reduced)", value=True)
-            stroke_mm = st.number_input("Stroke (mm)", min_value=10.0, value=200.0, step=5.0)
+            C_kN = st.number_input("Dynamic capacity C (kN)", min_value=0.1, value=25.0, step=0.5)
+            P_kN = st.number_input("Equivalent load P (kN)", min_value=0.01, value=5.0, step=0.1)
         with c3:
-            cycles_per_min = st.number_input("Cycles per minute", min_value=1.0, value=10.0, step=1.0)
+            n = st.number_input("Speed n (rpm)", min_value=1.0, value=1450.0, step=10.0)
+        return {"btype":btype,"C":C_kN,"P":P_kN,"n":n}
+    vals = formula_card(
+        r"L_{10}=\left(\frac{C}{P}\right)^p\quad;\quad L_h=\frac{L_{10}\cdot 10^6}{60\,n}",
+        draw_bearing,
+        note="p = 3 (ball) or 10/3 (roller)"
+    )
+    p_exp = 3.0 if "Ball" in vals["btype"] else 10.0/3.0
+    L10_mrev = (vals["C"]/vals["P"])**p_exp
+    Lh = (L10_mrev*1e6) / (60.0*vals["n"])
+    st.success(f"**L10:** {L10_mrev:.2f} million rev  |  **Life:** {Lh:.0f} h")
 
-        p_Pa = pressure_bar * 1e5
-        F_N = force_req * 1000.0 * safety
-        A_m2 = F_N / p_Pa
-        bore_mm = math.sqrt(4*A_m2/math.pi) * 1000.0
+    if st.button("📄 Export PDF — Bearing Life"):
+        pdf = export_pdf(
+            "Bearing Life — Formula-Guided",
+            {"Type": vals["btype"], "C (kN)": vals["C"], "P (kN)": vals["P"], "n (rpm)": vals["n"]},
+            {"L10 (million rev)": round(L10_mrev,2), "Life (h)": round(Lh,0)},
+        )
+        st.download_button("Download PDF", data=pdf, file_name="bearing_life_formulas.pdf", mime="application/pdf")
 
-        stroke_m = stroke_mm / 1000.0
-        A_piston = (math.pi*(bore_mm/1000.0)**2)/4.0
-        A_rod = (math.pi*(rod_d_mm/1000.0)**2)/4.0
-        vol_extend = A_piston * stroke_m
-        vol_retract = (A_piston - (A_rod if double_acting else 0.0)) * stroke_m
-        free_air_per_cycle = (vol_extend + vol_retract) * pressure_bar  # m³ at 1 bar abs
-        free_air_per_min = free_air_per_cycle * cycles_per_min
-
-        st.markdown(f"**Bore diameter:** {bore_mm:.1f} mm")
-        st.markdown(f"**Free air consumption:** {free_air_per_min*1000:.1f} NL/min (approx)")
-
-    # C) Signal scaling 4–20 mA
-    with m_tabs[2]:
-        c1, c2, c3 = st.columns(3)
+# 4) Belt Drive — Formula-led UI
+with tabs[3]:
+    st.subheader("Belt Drive Tensions — Formula-Guided")
+    def draw_belt():
+        c1,c2,c3 = st.columns(3)
         with c1:
-            eng_min = st.number_input("Engineering min", value=0.0, step=0.1)
-            eng_max = st.number_input("Engineering max", value=100.0, step=1.0)
+            P_kW = st.number_input("Power P (kW)", min_value=0.0, value=7.5, step=0.5)
+            SF = st.number_input("Service factor", min_value=1.0, value=1.2, step=0.1)
+            P_eff = P_kW*SF
         with c2:
-            mA_in = st.number_input("Measured current (mA)", min_value=0.0, value=12.0, step=0.1)
+            d_mm = st.number_input("Driver pulley diameter d (mm)", min_value=10.0, value=200.0, step=5.0)
+            n = st.number_input("Driver speed n (rpm)", min_value=1.0, value=1450.0, step=10.0)
+            v = math.pi * (d_mm/1000.0) * (n/60.0)
         with c3:
-            st.text_input("Input range (mA)", "4–20", disabled=True)
+            theta_deg = st.number_input("Wrap θ (deg)", min_value=10.0, max_value=210.0, value=170.0, step=1.0)
+            mu = st.number_input("Friction μ", min_value=0.05, max_value=1.0, value=0.30, step=0.01)
+        return {"P_eff":P_eff,"v":v,"theta_deg":theta_deg,"mu":mu,"d":d_mm,"n":n,"P":P_kW,"SF":SF}
+    vals = formula_card(
+        r"\Delta T=\frac{P}{v}\quad;\quad \frac{T_1}{T_2}=e^{\mu \theta}\quad;\quad v=\pi d \frac{n}{60}",
+        draw_belt,
+        note="θ in radians in the ratio; UI takes degrees"
+    )
+    dT = (vals["P_eff"]*1000.0) / max(vals["v"], 1e-9)
+    ratio = math.e ** (vals["mu"] * math.radians(vals["theta_deg"]))
+    T1 = dT * ratio / (ratio-1.0)
+    T2 = T1/ratio
+    st.success(f"**v:** {vals['v']:.2f} m/s  |  **ΔT:** {dT:.0f} N  |  **T1:** {T1:.0f} N  |  **T2:** {T2:.0f} N")
 
-        span_eng = eng_max - eng_min
-        value = eng_min + (max(min(mA_in,20.0),0.0) - 4.0) * (span_eng/16.0)
-        st.markdown(f"**Scaled value:** {value:.3f}")
+    if st.button("📄 Export PDF — Belt Drive"):
+        pdf = export_pdf(
+            "Belt Drive — Formula-Guided",
+            {"P (kW)": vals["P"], "SF": vals["SF"], "d (mm)": vals["d"], "n (rpm)": vals["n"], "θ (deg)": vals["theta_deg"], "μ": vals["mu"]},
+            {"v (m/s)": round(vals["v"],2), "ΔT (N)": round(dT,0), "T1 (N)": round(T1,0), "T2 (N)": round(T2,0)}
+        )
+        st.download_button("Download PDF", data=pdf, file_name="belt_drive_formulas.pdf", mime="application/pdf")
+
+# 5) Fillet Weld — Formula-led UI
+with tabs[4]:
+    st.subheader("Fillet Weld Capacity — Formula-Guided")
+    def draw_weld():
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            a = st.number_input("Leg size a (mm)", min_value=1.0, value=6.0, step=0.5)
+            length = st.number_input("Effective weld length (mm)", min_value=1.0, value=100.0, step=1.0)
+        with c2:
+            lines = st.selectbox("Number of weld lines", [1,2], index=1)
+            fv = st.number_input("Allowable shear τ_allow (MPa)", min_value=50.0, value=120.0, step=5.0)
+        with c3:
+            req_kN = st.number_input("Required capacity (kN)", min_value=0.0, value=0.0, step=1.0)
+        return {"a":a,"L":length,"lines":lines,"fv":fv,"req":req_kN}
+    vals = formula_card(
+        r"a_\mathrm{throat}=0.707\,a\quad;\quad A=a_\mathrm{throat}\,L\times \mathrm{lines}\quad;\quad F=A\,\tau_\mathrm{allow}",
+        draw_weld
+    )
+    throat = 0.707*vals["a"]
+    area = throat * vals["L"] * vals["lines"]
+    cap_N = area * vals["fv"]
+    ok_text = ""
+    if vals["req"]>0:
+        ok = (cap_N/1000.0)>=vals["req"]
+        ok_text = f" — check: {'✅ OK' if ok else '⚠️ Not OK'}"
+    st.success(f"**Capacity:** {cap_N/1000:.2f} kN  (throat {throat:.2f} mm, area {area:.1f} mm²){ok_text}")
+
+    if st.button("📄 Export PDF — Fillet Weld"):
+        pdf = export_pdf(
+            "Fillet Weld — Formula-Guided",
+            {"a (mm)": vals["a"], "L (mm)": vals["L"], "lines": vals["lines"], "τ_allow (MPa)": vals["fv"], "Req (kN)": vals["req"]},
+            {"throat (mm)": round(throat,2), "Area (mm²)": round(area,1), "Capacity (kN)": round(cap_N/1000.0,2)}
+        )
+        st.download_button("Download PDF", data=pdf, file_name="fillet_weld_formulas.pdf", mime="application/pdf")
+
+# 6) Thin Cylinder — Formula-led UI
+with tabs[5]:
+    st.subheader("Thin Cylinder — Stresses & Required Thickness (Formula-Guided)")
+    def draw_cyl():
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            p_MPa = st.number_input("Internal pressure p (MPa)", min_value=0.0, value=0.5, step=0.05)
+            D_mm = st.number_input("Mean diameter D (mm)", min_value=1.0, value=600.0, step=5.0)
+        with c2:
+            t_mm = st.number_input("Wall thickness t (mm)", min_value=0.1, value=6.0, step=0.5)
+            sigma_allow = st.number_input("Allowable hoop σ_allow (MPa)", min_value=50.0, value=150.0, step=5.0)
+        with c3:
+            CA = st.number_input("Corrosion allowance CA (mm)", min_value=0.0, value=0.0, step=0.5)
+            solve_t = st.toggle("Solve t for σ_allow", value=False)
+        return {"p":p_MPa,"D":D_mm,"t":t_mm,"sigma":sigma_allow,"CA":CA,"solve":solve_t}
+    vals = formula_card(
+        r"\sigma_h=\frac{pD}{2t}\quad;\quad \sigma_l=\frac{pD}{4t}\quad;\quad t_\mathrm{req}=\frac{pD}{2\sigma_\mathrm{allow}}",
+        draw_cyl,
+        note="Thin-wall approximation (t ≤ D/10)"
+    )
+    hoop = vals["p"]*vals["D"]/(2.0*vals["t"])
+    longi = vals["p"]*vals["D"]/(4.0*vals["t"])
+    st.success(f"**Hoop σ_h:** {hoop:.1f} MPa  |  **Longitudinal σ_l:** {longi:.1f} MPa")
+
+    if vals["solve"]:
+        t_req = vals["p"]*vals["D"]/(2.0*vals["sigma"])
+        t_req_total = t_req + vals["CA"]
+        st.info(f"**Required t (no CA):** {t_req:.2f} mm  |  **t with CA:** {t_req_total:.2f} mm")
+
+    if st.button("📄 Export PDF — Thin Cylinder"):
+        outs = {"σ_h (MPa)": round(hoop,1), "σ_l (MPa)": round(longi,1)}
+        if vals["solve"]:
+            outs.update({"t_req (mm)": round(t_req,2), "t_req+CA (mm)": round(t_req_total,2)})
+        pdf = export_pdf(
+            "Thin Cylinder — Formula-Guided",
+            {"p (MPa)": vals["p"], "D (mm)": vals["D"], "t (mm)": vals["t"], "σ_allow (MPa)": vals["sigma"], "CA (mm)": vals["CA"], "Solve t": vals["solve"]},
+            outs
+        )
+        st.download_button("Download PDF", data=pdf, file_name="thin_cylinder_formulas.pdf", mime="application/pdf")
 
 st.markdown("---")
-st.caption("© 2025 — v0.2.1 patch. Next up: keys/keyseats, chains, gears, beams, PV heads, conveyor libraries, PID helpers, VFD sizing.")
+st.caption("© 2025 — v0.2.2. Formula-guided layout added for core modules. Next: add 'info' panels with worked examples from your N6 book per topic.")

@@ -1,8 +1,6 @@
-# Machine Design Toolkit (N5/N6) — v0.2.1
+# Machine Design Toolkit (N5/N6) — v0.2.2
 
-Patch release: fixes on Conveyor tab
-- Flow area A label corrected to **cm²** (factor 1e4)
-- Idler spacing now displayed in **mm** (converted from metres)
+**New:** Formula-guided layout — each tab shows the main formula(s) on the left and the required inputs on the right.
 
 Quick start:
 ```bash
