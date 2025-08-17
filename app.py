@@ -1,130 +1,212 @@
-import math
+
 import streamlit as st
-import matplotlib.pyplot as plt
+from fpdf import FPDF
+from datetime import date
+import json
+from io import BytesIO
 
-st.set_page_config(page_title="Machine Design Toolkit — Single-File v0.2.7", layout="wide")
-st.title("🛠️ Machine Design Toolkit — Single-File v0.2.7")
+APP_TITLE = "OMEC Habit Tracker - v0.3 (PDF only)"
+DEFAULT_TASKS = ["Stretching", "German Lessons", "OMEC Designs", "Paint Bathroom"]
 
-tool = st.sidebar.radio("Choose tool", [
-    "Belt Drive Designer",
-    "Bolted Joint",
-    "Shaft Sizing",
-    "Bearing Life",
-    "Fillet Weld",
-    "Thin Cylinder",
-])
+# ---------------- UI THEME (OMEC style, ASCII-safe) ----------------
+st.set_page_config(page_title=APP_TITLE, layout="centered")
 
-def belt_drive():
-    st.header("🏁 Belt Drive Designer — Visual + Catalogue Assist")
-    def belt_length_open(D, d, C): return 2*C + (math.pi/2)*(D + d) + ((D - d)**2)/(4*C)
-    def belt_length_crossed(D, d, C): return 2*C + (math.pi/2)*(D + d) + ((D + d)**2)/(4*C)
-    def wrap_angle_small_open(D, d, C):
-        val = max(min((D - d) / (2*C), 1.0), -1.0); return math.pi - 2*math.asin(val)
-    def wrap_angle_small_crossed(D, d, C):
-        val = max(min((D + d) / (2*C), 1.0), -1.0); return math.pi + 2*math.asin(val)
+OMEC_PRIMARY = "#0EA5A1"  # teal-ish
+OMEC_BG = "#0B1620"       # deep navy
+OMEC_CARD = "#111827"     # dark card
+OMEC_TEXT = "#E5E7EB"     # light text
 
-    col1, col2 = st.columns(2)
+css = f"""
+<style>
+  .stApp {{
+    background-color: {OMEC_BG};
+    color: {OMEC_TEXT};
+  }}
+  .omec-card {{
+    background: {OMEC_CARD};
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px;
+    padding: 1.2rem 1.2rem;
+    box-shadow: 0 6px 30px rgba(0,0,0,0.35);
+  }}
+  .omec-pill {{
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: {OMEC_PRIMARY}22;
+    border: 1px solid {OMEC_PRIMARY}66;
+    color: {OMEC_TEXT};
+    font-size: 0.85rem;
+    margin-right: 8px;
+  }}
+  .small {{
+    opacity: 0.8;
+    font-size: 0.9rem;
+  }}
+</style>
+"""
+st.markdown(css, unsafe_allow_html=True)
+
+# ---------------- Session state ----------------
+if "tasks" not in st.session_state:
+    st.session_state.tasks = DEFAULT_TASKS.copy()
+
+# ---------------- Header ----------------
+st.markdown("<div class='omec-card'><h1 style='margin:0'>OMEC Habit Tracker</h1><div class='small'>v0.3 - PDF export - No data stored</div></div>", unsafe_allow_html=True)
+st.write("")
+
+# ---------------- Task Manager ----------------
+with st.container():
+    st.markdown("<div class='omec-card'>", unsafe_allow_html=True)
+    st.subheader("Task Manager")
+    st.caption("Add/edit your own tasks. Import/export presets to reuse later. (We don't store anything.)")
+
+    colA, colB = st.columns([2,1])
+    with colA:
+        raw_tasks = st.text_area("Tasks (one per line)", value="\n".join(st.session_state.tasks), height=140)
+    with colB:
+        new_task = st.text_input("Quick add")
+        if st.button("Add"):
+            t = new_task.strip()
+            if t:
+                lines = [x.strip() for x in raw_tasks.splitlines() if x.strip()]
+                lines.append(t)
+                raw_tasks = "\n".join(sorted(set(lines), key=lambda x: lines.index(x)))
+                st.session_state.tasks = [x for x in raw_tasks.splitlines() if x.strip()]
+                st.success(f"Added: {t}")
+                st.rerun()
+
+        if st.button("Apply edits"):
+            st.session_state.tasks = [x.strip() for x in raw_tasks.splitlines() if x.strip()]
+            st.success("Tasks updated.")
+
+    # Import / Export presets
+    c1, c2 = st.columns(2)
+    with c1:
+        up = st.file_uploader("Import preset (.json)", type=["json"])
+        if up is not None:
+            try:
+                data = json.load(up)
+                if isinstance(data, dict) and "tasks" in data and isinstance(data["tasks"], list):
+                    st.session_state.tasks = [str(x) for x in data["tasks"] if str(x).strip()]
+                    st.success("Preset loaded.")
+                    st.rerun()
+                else:
+                    st.error("Invalid preset format. Expecting { 'tasks': [ ... ] }")
+            except Exception as e:
+                st.error(f"Could not read preset: {e}")
+    with c2:
+        preset = json.dumps({"tasks": st.session_state.tasks}, indent=2)
+        st.download_button("Export preset (.json)", data=preset, file_name="OMEC_tasks_preset.json", mime="application/json")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ---------------- Daily Check-in ----------------
+with st.container():
+    st.markdown("<div class='omec-card'>", unsafe_allow_html=True)
+    st.subheader("Daily Check-in")
+    col1, col2 = st.columns([1,2])
     with col1:
-        arrangement = st.selectbox("Arrangement", ["Open", "Crossed"])
-        n1 = st.number_input("Driver RPM n₁", min_value=1, value=1450)
-        n2 = st.number_input("Driven RPM n₂", min_value=1, value=725)
-        d = st.number_input("Small pulley d (mm)", min_value=10.0, value=150.0, step=5.0)
-        C = st.number_input("Centre distance C (mm)", min_value=50.0, value=800.0, step=10.0)
-        D0 = d * (n1 / n2)
-        D = st.number_input("Large pulley D (mm)", min_value=10.0, value=float(round(D0,1)), step=5.0)
+        selected_date = st.date_input("Date", value=date.today())
     with col2:
-        P = st.number_input("Required power (kW)", min_value=0.1, value=7.5, step=0.1)
-        SF = st.number_input("Service factor", min_value=0.5, value=1.3, step=0.05)
-        per = st.number_input("Per-belt rating (kW/belt)", min_value=0.01, value=2.0, step=0.05)
+        st.markdown("<span class='omec-pill'>No autosave</span><span class='omec-pill'>Export to PDF</span>", unsafe_allow_html=True)
 
-    Pdes = P*SF
-    belts = max(1, int((Pdes + per - 1e-9)//per))
-    st.success(f"Design power = {P:.2f} × {SF:.2f} = **{Pdes:.2f} kW**")
-    st.info(f"Minimum number of belts: **{belts}**")
-
-    if arrangement == "Open":
-        L = belt_length_open(D, d, C)
-        theta_s = wrap_angle_small_open(D, d, C)
+    checks = {}
+    if len(st.session_state.tasks) == 0:
+        st.info("No tasks. Add tasks above to start tracking.")
     else:
-        L = belt_length_crossed(D, d, C)
-        theta_s = wrap_angle_small_crossed(D, d, C)
+        grid_cols = st.columns(2)
+        for i, task in enumerate(st.session_state.tasks):
+            with grid_cols[i % 2]:
+                checks[task] = st.checkbox(task, value=False, key=f"chk_{i}")
 
-    ratio = n1 / n2
-    v = math.pi * (d/1000.0) * n1 / 60.0
-    theta_deg = theta_s * 180.0 / math.pi
+    notes = st.text_area("Notes (optional)", placeholder="Wins / obstacles / quick notes...")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    a,b,c,dv = st.columns(4)
-    a.metric("Ratio n₁/n₂", f"{ratio:.3f}")
-    b.metric("Belt length L", f"{L:.1f} mm")
-    c.metric("Wrap angle (small)", f"{theta_deg:.1f}°")
-    dv.metric("Belt speed v", f"{v:.2f} m/s")
+# ---------------- PDF Generation ----------------
+class HabitPDF(FPDF):
+    def header(self):
+        self.set_fill_color(14,165,161)
+        self.rect(0, 0, 210, 18, 'F')
+        self.set_text_color(255,255,255)
+        self.set_font("Helvetica", "B", 14)
+        self.set_xy(10, 5)
+        self.cell(0, 8, "OMEC Habit Tracker - v0.3", 0, 1, "L")
 
-    st.subheader("To-scale diagram")
-    fig, ax = plt.subplots(figsize=(8,5))
-    Rb, Rs = D/2.0, d/2.0; cx1, cx2 = 0.0, C; cy = 0.0
-    ax.add_patch(plt.Circle((cx1, cy), Rs, fill=False))
-    ax.add_patch(plt.Circle((cx2, cy), Rb, fill=False))
-    if arrangement == "Open":
-        val = max(min((Rb - Rs)/C, 1.0), -1.0); th = math.acos(val)
-        t1s = (cx1 + Rs*math.sin(th),  cy + Rs*math.cos(th))
-        t2s = (cx1 - Rs*math.sin(th),  cy - Rs*math.cos(th))
-        t1b = (cx2 + Rb*math.sin(th),  cy + Rb*math.cos(th))
-        t2b = (cx2 - Rb*math.sin(th),  cy - Rb*math.cos(th))
+    def footer(self):
+        self.set_y(-15)
+        self.set_text_color(150,150,150)
+        self.set_font("Helvetica", "", 9)
+        self.cell(0, 10, "Generated by OMEC Habit Tracker - file is your record (no data stored)", 0, 0, "C")
+
+def sanitize_ascii(text: str) -> str:
+    replacements = {
+        "—": "-",
+        "–": "-",
+        "✅": "",
+        "☑": "[x]",
+        "☐": "[ ]",
+        "•": "-",
+        "...": "...",
+        "’": "'",
+        "“": '"',
+        "”": '"'
+    }
+    for k,v in replacements.items():
+        text = text.replace(k,v)
+    return text.encode("latin-1", "ignore").decode("latin-1")
+
+def generate_pdf(d: date, checks: dict, notes: str) -> bytes:
+    pdf = HabitPDF()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_page()
+
+    # Title
+    pdf.set_text_color(31,41,55)
+    pdf.set_xy(10, 24)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, sanitize_ascii(f"Daily Log - {d.isoformat()}"), ln=1)
+
+    # Checklist
+    pdf.set_font("Helvetica", "", 12)
+    pdf.ln(2)
+    for task, done in checks.items():
+        box = "[x]" if done else "[ ]"
+        pdf.cell(0, 8, sanitize_ascii(f"{box}  {task}"), ln=1)
+
+    # Notes
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Notes:", ln=1)
+    pdf.set_font("Helvetica", "", 12)
+    safe_notes = sanitize_ascii(notes or "")
+    if safe_notes.strip():
+        for line in safe_notes.splitlines():
+            pdf.multi_cell(0, 6, line)
     else:
-        val = max(min((Rb + Rs)/C, 1.0), -1.0); th = math.acos(val)
-        t1s = (cx1 + Rs*math.sin(th),  cy - Rs*math.cos(th))
-        t2s = (cx1 - Rs*math.sin(th),  cy + Rs*math.cos(th))
-        t1b = (cx2 + Rb*math.sin(th),  cy + Rb*math.cos(th))
-        t2b = (cx2 - Rb*math.sin(th),  cy - Rb*math.cos(th))
-    ax.plot([t1s[0], t1b[0]], [t1s[1], t1b[1]])
-    ax.plot([t2s[0], t2b[0]], [t2s[1], t2b[1]])
-    pad = max(Rb, Rs) + 60
-    ax.set_aspect('equal', adjustable='box')
-    ax.set_xlim(-pad, C + pad); ax.set_ylim(-pad - max(Rb, Rs), pad + max(Rb, Rs)); ax.axis('off')
-    st.pyplot(fig)
+        pdf.set_text_color(120,120,120)
+        pdf.cell(0, 6, "-", ln=1)
+        pdf.set_text_color(31,41,55)
 
-def bolted_joint():
-    st.header("🔩 Bolted Joint — Placeholder")
-    F = st.number_input("Service load F (kN)", min_value=0.0, value=10.0)
-    phi = st.number_input("Joint stiffness φ", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
-    SF = st.number_input("Safety Factor", min_value=1.0, value=1.5, step=0.1)
-    st.metric("Suggested Preload (rough)", f"{(F*phi*SF):.2f} kN")
+    # Summary footer
+    pdf.ln(6)
+    done_count = sum(1 for v in checks.values() if v)
+    total = max(1, len(checks))
+    pct = int(done_count * 100 / total) if total > 0 else 0
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, sanitize_ascii(f"Completion: {done_count}/{total} tasks - {pct}%"), ln=1)
 
-def shaft_sizing():
-    st.header("🪝 Shaft Sizing — Placeholder")
-    T = st.number_input("Torque T (N·m)", min_value=1.0, value=500.0)
-    tau = st.number_input("Allowable shear τ (MPa)", min_value=10.0, value=60.0)
-    d = (16*T/(math.pi*(tau*1e6)))**(1/3); st.metric("Estimated d", f"{d*1000:.1f} mm")
+    return pdf.output(dest="S").encode("latin-1")
 
-def bearing_life():
-    st.header("🧭 Bearing Life (L10) — Placeholder")
-    C = st.number_input("Dynamic rating C (kN)", min_value=1.0, value=35.0)
-    P = st.number_input("Equivalent load P (kN)", min_value=0.1, value=8.0)
-    p = st.selectbox("Exponent p", [3, 10/3], index=0)
-    L10 = (C/P)**p; st.metric("L10 (million revs)", f"{L10:.2f}")
-    n = st.number_input("Speed (rpm)", min_value=1, value=1500)
-    st.metric("Life (hours)", f"{(L10*1e6)/(60*n):.0f} h")
+st.markdown("<div class='omec-card'>", unsafe_allow_html=True)
+st.subheader("Export")
+if st.button("Generate PDF"):
+    if not st.session_state.tasks:
+        st.warning("Add at least one task in the Task Manager.")
+    else:
+        pdf_bytes = generate_pdf(selected_date, checks, notes)
+        st.download_button("Download Daily Log (PDF)", data=pdf_bytes, file_name=f"OMEC_Daily_Log_{selected_date.isoformat()}.pdf", mime="application/pdf")
+        st.success("PDF ready. Save it wherever you want. No data was stored.")
+st.markdown("</div>", unsafe_allow_html=True)
 
-def fillet_weld():
-    st.header("🧱 Fillet Weld — Placeholder")
-    P = st.number_input("Applied shear (kN)", min_value=0.0, value=12.0)
-    a = st.number_input("Throat size a (mm)", min_value=1.0, value=4.0)
-    L = st.number_input("Effective length L (mm)", min_value=1.0, value=120.0)
-    tau_allow = st.number_input("Allowable shear (MPa)", min_value=10.0, value=140.0)
-    area = a*L; tau = (P*1e3)/area if area>0 else 0.0
-    st.metric("Calc shear stress", f"{tau:.1f} MPa")
-
-def thin_cyl():
-    st.header("🥫 Thin Cylinder Basics — Placeholder")
-    p = st.number_input("Internal pressure p (MPa)", min_value=0.0, value=1.2)
-    D = st.number_input("Diameter D (mm)", min_value=1.0, value=600.0)
-    t = st.number_input("Wall thickness t (mm)", min_value=0.1, value=6.0)
-    st.metric("Hoop stress σh", f"{((p*1e6)*(D/1000.0)/(2*(t/1000.0)))/1e6:.2f} MPa")
-    st.metric("Longitudinal stress σl", f"{((p*1e6)*(D/1000.0)/(4*(t/1000.0)))/1e6:.2f} MPa")
-
-if tool == "Belt Drive Designer": belt_drive()
-elif tool == "Bolted Joint": bolted_joint()
-elif tool == "Shaft Sizing": shaft_sizing()
-elif tool == "Bearing Life": bearing_life()
-elif tool == "Fillet Weld": fillet_weld()
-else: thin_cyl()
+st.caption("Tip: Keep your PDFs and task presets in organized folders, e.g., OMEC/Habits/2025-08.")
